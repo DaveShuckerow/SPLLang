@@ -27,6 +27,7 @@ import sys
 PUNCTUATION = ".!?,:;[]"
 PUNC_NO_COMMA = PUNCTUATION.replace(",","")
 VERBOSE = False
+MAX_INT = 2**31
 
 """
 Abstract Syntax Tree
@@ -83,6 +84,7 @@ class Program(ASTNode):
 		environ["Scene"] = 1
 		environ["Goto"] = ("Act", 1)
 		environ["Stage"] = set()
+		environ["Boolean"] = False
 		environ = self.title.eval(environ)
 		environ = self.dramatis_personae.eval(environ)
 		environ = self.acts.eval(environ)
@@ -196,6 +198,9 @@ class Act(ASTNode):
 				environ["Scene"] += 1
 				if environ["Scene"] > len(self.scenes):
 					environ["Goto"] = ("Act", self.number.value + 1)
+			elif environ["Goto"][0] == "Scene":
+				environ["Scene"] = environ["Goto"][1]
+				environ["Goto"] = ("None", 0)
 		return environ
 
 	def __str__(self):
@@ -246,6 +251,8 @@ class Lines(ASTNode):
 	def eval(self, environ):
 		for l in self.commands:
 			environ = l.eval(environ)
+			if environ["Goto"][0] != "None":
+				return environ
 		return environ
 
 	def __iter__(self):
@@ -269,8 +276,7 @@ class Instruction(ASTNode):
 					self.characters.append(" ".join(self.tokens[name_index:instr_index]))
 					name_index = instr_index+1
 				else:
-					# This should be an error.
-					pass
+					raise Exception("Stage command -- invalid syntax.")
 			instr_index += 1
 		if instr_index-name_index > 0:
 			self.characters.append(" ".join(self.tokens[name_index:instr_index]))
@@ -329,7 +335,8 @@ class Sentences(ASTNode):
 	def parse(self):
 		self.contents = []
 		start = 0
-		end = start+len(find_punctuation(self.tokens[start:]))
+		end = start+len(find_punctuation(self.tokens[start:], PUNC_NO_COMMA))
+		hasIf = 0
 		while end < len(self.tokens) and self.tokens[end] not in ["]", "[", ":"]:
 			tks = self.tokens[start:min(end+1, len(self.tokens))]
 			cls = Sentence
@@ -344,6 +351,9 @@ class Sentences(ASTNode):
 				cls = Goto
 			elif w0 in conditions:
 				cls = Conditional
+				hasIf = 2
+				end = start+len(find_punctuation(self.tokens[start:]))
+				tks = self.tokens[start:min(end+1, len(self.tokens))]
 			elif w0 in pushes:
 				cls = Push
 			elif w0 in pops:
@@ -352,9 +362,16 @@ class Sentences(ASTNode):
 				cls = Query
 			if VERBOSE:
 				print(cls.__name__)
+				if (cls == Sentence):
+					print(w0)
 			sent = cls(tks)
 			sent.parse()
-			self.contents.append(sent)
+			if hasIf >= 0:
+				if hasIf == 1:
+					self.contents[-1].body = sent
+				hasIf -= 1
+			if hasIf != 0:
+				self.contents.append(sent)
 			start = end+1
 			end = start+len(find_punctuation(self.tokens[start:]))
 		self.tokens = self.tokens[:start]
@@ -362,6 +379,8 @@ class Sentences(ASTNode):
 	def eval(self, environ):
 		for s in self.contents:
 			environ = s.eval(environ)
+			if environ["Goto"][0] != "None":
+				return environ
 		return environ
 
 	def __str__(self):
@@ -377,9 +396,11 @@ class Sentence(ASTNode):
 			i = start
 			word = tokens[i]
 			w = word.lower()
-			if w in ADJECTIVES:
+			if i+1 < len(tokens):
+				w1 = tokens[i+1].lower()
+			if w in ADJECTIVES and w1 != "as":
 				value *= 2
-			elif w in NOUNS:
+			elif w in NOUNS and w1 != "as":
 				value *= NOUNS[w]
 				#print("Math: "+str(value))
 				return value, start + 1
@@ -397,11 +418,11 @@ class Sentence(ASTNode):
 					#print(word+": "+str(value))
 				value *= environ[" ".join(environ["Characters"][word])][-1]
 				return value, start + 1
-			w2 = w
+			w2 = w, w
 			if i + 2 < len(tokens):
 				w2 = tokens[i+2].lower()
 			if w in parameters:
-				if w2 not in parameters:
+				if w2 not in parameters and w1 not in parameters:
 					start += 1
 					params = []
 					for i in range(parameters[w]):
@@ -429,6 +450,9 @@ class Assignment(Sentence):
 		environ = dict(environ)
 		listener = environ["Listener"]
 		environ[listener][-1] = self.parse_math(environ, 1)[0]#, environ[listener][-1])[0]
+		# I have to recreate integer overflow.
+		if environ[listener][-1] >= MAX_INT:
+			environ[listener][-1] = -MAX_INT
 		if VERBOSE:
 			print("{}: {}".format(self, environ))
 		return environ
@@ -501,10 +525,39 @@ class Output(Sentence):
 
 
 class Goto(Sentence):
-	pass
+	
+	def eval(self, environ):
+		environ = dict(environ)
+		if "scene" in self.tokens:
+			goto = "Scene"
+			ind = self.tokens.index(goto.lower())
+		elif  "Scene" in self.tokens:
+			goto = "Scene"
+			ind = self.tokens.index(goto)
+		elif "act" in self.tokens:
+			goto = "Act"
+			ind = self.tokens.index(goto.lower())
+		elif "Act" in self.tokens:
+			goto = "Act"
+			ind = self.tokens.index(goto)
+		environ["Goto"] = goto, Roman(self.tokens[ind+1]).value
+		return environ
 
 class Conditional(Sentence):
-	pass
+
+	def __init__(self, tokens):
+		super().__init__(tokens)
+		self.body = None
+	
+	def eval(self, environ):
+		environ = dict(environ)
+		if self.tokens[1] == "not":
+			testResult = False
+		else:
+			testResult = True
+		if environ["Boolean"] == testResult:
+			environ = self.body.eval(environ)
+		return environ
 
 class Push(Sentence):
 	
@@ -532,7 +585,23 @@ class Pop(Sentence):
 		return environ
 
 class Query(Sentence):
-	pass
+	
+	def eval(self, environ):
+		environ = dict(environ)
+		listener = environ["Listener"]
+		val1, end = self.parse_math(environ, 1)
+		if self.tokens[end] == "better" or self.tokens[end] == "more":
+			test = lambda x, y: x > y
+		elif self.tokens[end] == "worse" or self.tokens[end] == "less":
+			test = lambda x, y: x < y
+		else:
+			test = lambda x, y: x == y
+		if self.tokens[2] == "not":
+			test = lambda x, y: not test(x, y)
+		val2 = self.parse_math(environ, end+2)[0]
+		environ["Boolean"] = test(val1, val2)
+		return environ
+
 
 class Roman(object):
 
@@ -570,16 +639,18 @@ operations = {
 	"product": lambda x, y: x * y,
 	"division": lambda x, y: x // y,
 	"quotient": lambda x, y: x // y,
+	"remainder": lambda x, y: x % y,
 	"square": lambda x: x ** 2,
 	"cube": lambda x: x ** 3,
 	"root": lambda x: x ** 0.5,
 	"twice": lambda x: x * 2,
 }
 gotos = set([
-	"Let"
+	"let",
+	"we"
 ])
 conditions = set([
-	"If"
+	"if"
 ])
 pushes = set([
 	"remember"
