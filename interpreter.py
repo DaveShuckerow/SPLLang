@@ -25,6 +25,7 @@ import sys
 
 
 PUNCTUATION = ".!?,:;[]"
+PUNC_NO_COMMA = PUNCTUATION.replace(",","")
 VERBOSE = False
 
 """
@@ -91,7 +92,7 @@ class Program(ASTNode):
 class Title(ASTNode):
 
 	def parse(self):
-		self.tokens = find_punctuation(self.tokens)
+		self.tokens = find_punctuation(self.tokens, PUNC_NO_COMMA)
 		self.contents = ' '.join(self.tokens)
 
 	def eval(self, environ):
@@ -128,7 +129,7 @@ class Character(ASTNode):
 
 	def parse(self):
 		self.name = self.tokens[:self.tokens.index(",")]
-		self.description = find_punctuation(self.tokens[len(self.name)+1:])
+		self.description = find_punctuation(self.tokens[len(self.name)+1:], PUNC_NO_COMMA)
 		self.tokens = self.name + [","] + self.description
 		self.name = " ".join(self.name)
 		self.description = " ".join(self.description)
@@ -174,7 +175,7 @@ class Act(ASTNode):
 
 	def parse(self):
 		self.number = Roman(self.tokens[1])
-		self.description = find_punctuation(self.tokens[3:])
+		self.description = find_punctuation(self.tokens[3:], PUNC_NO_COMMA)
 		scene_index = len(self.description) + 4
 		self.description = " ".join(self.description)
 		self.scenes = []
@@ -207,7 +208,7 @@ class Scene(ASTNode):
 		self.number = Roman(self.tokens[1])
 		#if VERBOSE:
 		#	print("Scene: {}".format(self.number))
-		self.description = find_punctuation(self.tokens[3:])
+		self.description = find_punctuation(self.tokens[3:], PUNC_NO_COMMA)
 		scene_index = len(self.description) + 4
 		self.description = " ".join(self.description)
 		self.lines = Lines(self.tokens[scene_index:])
@@ -333,7 +334,7 @@ class Sentences(ASTNode):
 			tks = self.tokens[start:min(end+1, len(self.tokens))]
 			cls = Sentence
 			w0 = tks[0].lower()
-			if w0 in PERSONAL_NOUNS:
+			if w0 in PERSONAL_NOUNS and PERSONAL_NOUNS[w0] == 1:
 				cls = Assignment
 			elif len(tks) > 2 and w0 in inputs and inputs[w0] == inputs[tks[2].lower()]:
 				cls = Input
@@ -382,6 +383,13 @@ class Sentence(ASTNode):
 				value *= NOUNS[w]
 				#print("Math: "+str(value))
 				return value, start + 1
+			elif word in PERSONAL_NOUNS:
+				if PERSONAL_NOUNS[word] == 1:
+					value *= environ[environ["Listener"]][-1]
+					return value, start+1
+				elif PERSONAL_NOUNS[word] == 2:
+					value *= environ[environ["Speaker"]][-1]
+					return value, start+1
 			elif (word in environ["Characters"] and
 				  tokens[i:i+len(environ["Characters"][word])] == environ["Characters"][word]):
 				i += len(environ["Characters"][word])
@@ -414,21 +422,66 @@ class Sentence(ASTNode):
 	def __str__(self):
 		return " ".join(self.tokens[:-1]) + self.tokens[-1]
 
+
 class Assignment(Sentence):
 
 	def eval(self, environ):
 		environ = dict(environ)
 		listener = environ["Listener"]
-		environ[listener][-1] = self.parse_math(environ, 0, environ[listener][-1])[0]
+		environ[listener][-1] = self.parse_math(environ, 1)[0]#, environ[listener][-1])[0]
 		if VERBOSE:
 			print("{}: {}".format(self, environ))
 		return environ
 
+
 class Input(Sentence):
+	
+	def __init__(self, tokens):
+		super().__init__(tokens)
+		"""try:
+			# Windows getch
+			import msvcrt, sys
+			def getch():
+				ch = msvcrt.getwch()
+				msvcrt.putwch(ch)
+				sys.stdin.flush()
+				return ch
+			self.getch = getch
+		except ImportError:
+			# 'Nix getch will be needed.
+			import termios, sys, tty
+			def getch():
+				fd = sys.stdin.fileno()
+				old_settings = termios.tcgetattr(fd)
+				try:
+					tty.setraw(fd)
+					ch = sys.stdin.read(1)
+				finally:
+					termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+				sys.stdin.flush()
+				return ch
+			self.getch = getch"""
+
+	def getch(self):
+		ch = sys.stdin.read(1)
+		return ch
 
 	def eval(self, environ):
 		environ = dict(environ)
+		listener = environ["Listener"]
+		if inputs[self.tokens[0].lower()] == 1:
+			ch = self.getch()
+			environ[listener][-1] = ord(ch)
+		else:
+			"""in_int = ""
+			ch = self.getch()
+			while ch in [chr(ord("0")+i) for i in range(10)]:
+				in_int += ch
+				ch = self.getch()
+			sys.stdin.flush()"""
+			environ[listener][-1] = int(input())#in_int)
 		return environ
+
 
 class Output(Sentence):
 	
@@ -443,7 +496,9 @@ class Output(Sentence):
 			else:
 				out = chr(out)
 		print(out, end="")
+		sys.stdout.flush()
 		return environ
+
 
 class Goto(Sentence):
 	pass
@@ -452,10 +507,29 @@ class Conditional(Sentence):
 	pass
 
 class Push(Sentence):
-	pass
+	
+	def eval(self, environ):
+		environ = dict(environ)
+		listener = environ["Listener"]
+		remember = self.parse_math(environ, 1)[0]
+		if VERBOSE:
+			print(listener, environ[listener])	
+		top = environ[listener].pop()
+		environ[listener].append(remember)
+		environ[listener].append(top)
+		if VERBOSE:
+			print(environ[listener], remember, top)	
+		"""NOT FINISHED"""
+		return environ
 
+#Trying to pop when the stack is empty is a sure sign that the author has not yet perfected her storytelling skills, and will severly disappoint the runtime system.
 class Pop(Sentence):
-	pass
+	
+	def eval (self, environ):
+		environ = dict(environ)
+		listener = environ["Listener"]
+		environ[listener].pop()
+		return environ
 
 class Query(Sentence):
 	pass
@@ -508,10 +582,10 @@ conditions = set([
 	"If"
 ])
 pushes = set([
-	"Remember"
+	"remember"
 ])
 pops = set([
-	"Recall"
+	"recall"
 ])
 NOUNS = load_map_from_file("keywords/nouns.kws")
 ADJECTIVES = load_map_from_file("keywords/adjectives.kws")
@@ -525,7 +599,8 @@ main
 if __name__ == "__main__":
 	if "-v" in sys.argv:
 		VERBOSE = True
-	program = Program(tokenize("../hello.spl"))
+		sys.argv.remove("-v")
+	program = Program(tokenize(sys.argv[1]))
 	program.parse()
 	state = program.eval(dict())
 	if VERBOSE:
