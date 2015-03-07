@@ -28,6 +28,8 @@ PUNCTUATION = ".!?,:;[]"
 PUNC_NO_COMMA = PUNCTUATION.replace(",","")
 VERBOSE = False
 MAX_INT = 2**31
+ACT = "Act"
+SCENE = "Scene"
 
 """
 Abstract Syntax Tree
@@ -36,7 +38,7 @@ def tokenize(f):
 	contents = open(f).read()
 	for p in PUNCTUATION:
 		contents = contents.replace(p, " {} ".format(p))
-	tokens = contents.split()
+	tokens = [w for w in contents.split()] # w.lower() if w not in PUNCTUATION else 
 	if VERBOSE:
 		print("Tokens: "+str(tokens))
 	return tokens
@@ -109,7 +111,7 @@ class DramatisPersonae(ASTNode):
 	def parse(self):
 		start_index = 0
 		self.contents = []
-		while self.tokens[start_index] != "Act":
+		while self.tokens[start_index] != ACT:
 			self.contents.append(Character(self.tokens[start_index:]))
 			self.contents[-1].parse()
 			start_index += len(self.contents[-1].tokens) + 1
@@ -181,7 +183,7 @@ class Act(ASTNode):
 		scene_index = len(self.description) + 4
 		self.description = " ".join(self.description)
 		self.scenes = []
-		while scene_index < len(self.tokens) and self.tokens[scene_index] == "Scene":
+		while scene_index < len(self.tokens) and self.tokens[scene_index] == SCENE:
 			s = Scene(self.tokens[scene_index:])
 			s.parse()
 			scene_index += len(s.tokens)
@@ -235,7 +237,7 @@ class Lines(ASTNode):
 	def parse(self):
 		line_index = 0
 		self.commands = []
-		while line_index < len(self.tokens) and self.tokens[line_index] != "Scene" and self.tokens[line_index] != "Act":
+		while line_index < len(self.tokens) and self.tokens[line_index] != SCENE and self.tokens[line_index] != ACT:
 			cmd = None
 			if self.tokens[line_index] == "[":
 				# we have an Instruction.
@@ -284,6 +286,8 @@ class Instruction(ASTNode):
 
 	def eval(self, environ):
 		environ = dict(environ)
+		#if VERBOSE:
+			#print(environ, self)
 		if self.instr == "Enter":
 			fun = environ["Stage"].add
 		else:
@@ -607,6 +611,7 @@ class Roman(object):
 
 	def __init__(self, num):
 		romans = {"I":1, "V":5, "X":10, "L":50, "C":100, "D":500, "M":1000}
+		#romans = {"i":1, "v":5, "x":10, "l":50, "c":100, "d":500, "m":1000}
 		self.string = num
 		self.value = 0
 		for n1, n2 in zip(num, num[1:]):
