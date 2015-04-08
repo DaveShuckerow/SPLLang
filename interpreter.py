@@ -22,7 +22,11 @@ We can decompose the SPL language into the following:
 <NameList> -> <Name> | <Name> and <NameList>
 """
 import sys
+import nltk
 
+"""
+TODO: Replace built-in sentence evaluator with POS-tagged evaluator for adjectives
+"""
 
 PUNCTUATION = ".!?,:;[]"
 PUNC_NO_COMMA = PUNCTUATION.replace(",","")
@@ -400,6 +404,10 @@ class Sentence(ASTNode):
 			i = start
 			word = tokens[i]
 			w = word.lower()
+			_, pos = nltk.pos_tag([w])[0]
+			if VERBOSE:
+				print("{}:{}".format(w, pos))
+			w1 = w
 			if i+1 < len(tokens):
 				w1 = tokens[i+1].lower()
 			if w in ADJECTIVES and w1 != "as":
@@ -422,6 +430,9 @@ class Sentence(ASTNode):
 					#print(word+": "+str(value))
 				value *= environ[" ".join(environ["Characters"][word])][-1]
 				return value, start + 1
+			elif pos[:2] == "JJ" and w1 != "as":
+				# Check for adjectives not in the list.
+				value *= 2
 			w2 = w, w
 			if i + 2 < len(tokens):
 				w2 = tokens[i+2].lower()
