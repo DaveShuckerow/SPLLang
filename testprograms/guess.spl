@@ -1,4 +1,4 @@
-The guessing game, by Jonas Sjöbergh, jsh@nada<dot>kth<dot>se, 
+The guessing game, by Jonas Sjobergh, jsh@nada<dot>kth<dot>se, 
 think of a number between 1 and 1000, if the program's guess is
 too high input "<", if it is too low input ">" and if it is correct
 input "=".
